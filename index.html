@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Gestor de Inventario INEGI</title>
+
+<link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+
+<link rel="stylesheet" href="https://cdn.datatables.net/buttons/2.4.2/css/buttons.dataTables.min.css">
+<script src="https://cdn.datatables.net/buttons/2.4.2/js/dataTables.buttons.min.js"></script>
+
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
+<style>
+body {
+    background-color: #f8f9fa;
+    padding-top: 50px;
+}
+.container {
+    background: #ffffff;
+    padding: 30px;
+    border-radius: 10px;
+}
+table.dataTable tbody tr:nth-child(even) {
+    background-color: #f2f2f2 !important;
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+    <h2>Cargar Inventario_XLS</h2>
+
+    <input class="form-control" type="file" id="subir-excel" accept=".csv, .xlsx">
+
+    <button class="btn btn-primary" id="descargar-excel" style="display:none;">
+        Descargar Actualizaciones
+    </button>
+
+    <button class="btn btn-success" id="descargar-consulta" style="display:none;">
+        Descargar Consulta
+    </button>
+
+    <button class="btn btn-primary" id="agregar-registro" style="display:none;">
+        Agregar Registro
+    </button>
+
+
+
+    <div class="table-responsive mt-3">
+        <table id="mi-tabla" class="display table table-bordered"></table>
+    </div>
+</div>
+
+<script>
+$(document).ready(function() {
+
+let tabla;
+
+// =========================
+// CARGA DE EXCEL
+// =========================
+$('#subir-excel').on('change', function(e) {
+    const file = e.target.files[0];
+    const reader = new FileReader();
+
+    reader.onload = function(e) {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const json = XLSX.utils.sheet_to_json(
+            workbook.Sheets[workbook.SheetNames[0]], 
+            { header: 1 }
+        );
+
+        renderizarTabla(json);
+        $('#descargar-excel').show();
+        
+        $('#descargar-consulta').show();
+        $('#agregar-registro').show();
+
+
+    };
+
+    reader.readAsArrayBuffer(file);
+});
+
+// =========================
+// RENDER TABLA
+// =========================
+function renderizarTabla(data) {
+    let html = '<thead><tr>';
+
+    data[0].forEach(col => html += `<th>${col}</th>`);
+    html += '<th>Acciones</th></tr></thead><tbody>';
+
+    for (let i = 1; i < data.length; i++) {
+        html += '<tr>';
+
+        data[i].forEach(cell => html += `<td>${cell || ''}</td>`);
+
+        html += `
+        <td>
+            <button class="btn btn-sm btn-warning edit">Editar</button>
+            <button class="btn btn-sm btn-danger del">Eliminar</button>
+        </td>`;
+
+        html += '</tr>';
+    }
+
+    html += '</tbody>';
+
+    $('#mi-tabla').html(html);
+
+    if (tabla) tabla.destroy();
+
+    tabla = $('#mi-tabla').DataTable({
+        pageLength: 10
+    });
+}
+
+// =========================
+// ELIMINAR FILA
+// =========================
+$('#mi-tabla').on('click', '.del', function() {
+    tabla.row($(this).parents('tr')).remove().draw();
+});
+
+// =========================
+// EDITAR FILA
+// =========================
+$('#mi-tabla').on('click', '.edit', function() {
+    let tr = $(this).parents('tr');
+
+    tr.find('td:not(:last-child)').each(function() {
+        let val = $(this).text();
+        $(this).html(`<input class="form-control form-control-sm" value="${val}">`);
+    });
+
+    $(this).text('Guardar')
+           .removeClass('edit btn-warning')
+           .addClass('save btn-success');
+});
+
+// =========================
+// GUARDAR CAMBIOS (CLAVE)
+// =========================
+
+$('#mi-tabla').on('click', '.save', function() {
+
+    let tr = $(this).parents('tr');
+    let fila = tabla.row(tr);
+    let datos = fila.data();
+
+    tr.find('input').each(function(index) {
+        datos[index] = $(this).val();
+    });
+
+    // ✅ Guardar en DataTables
+    fila.data(datos).draw(false);
+
+    // Restaurar botón a modo editar
+    $(this).text('Editar')
+           .removeClass('save btn-success')
+           .addClass('edit btn-warning');
+});
+
+
+// =========================
+// EXPORTAR EXCEL (PRO)
+// =========================
+$('#descargar-excel').on('click', function() {
+
+    const datos = tabla.rows().data();
+    const rows = [];
+
+    // Encabezados
+    const encabezados = [];
+    $('#mi-tabla thead th').each(function() {
+        if ($(this).text() !== 'Acciones') {
+            encabezados.push($(this).text());
+        }
+    });
+
+    rows.push(encabezados);
+
+    // ✅ TODAS LAS FILAS (incluye páginas ocultas)
+    datos.each(function(fila) {
+        rows.push(fila.slice(0, encabezados.length));
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+
+    XLSX.utils.book_append_sheet(wb, ws, "Inventario");
+
+    XLSX.writeFile(wb, "Inventario_Completo_Actualizado.xlsx");
+
+    $('#descargar-consulta').on('click', function() {
+
+    // ✅ SOLO FILAS FILTRADAS (la “consulta”)
+    const datos = tabla.rows({ search: 'applied' }).data();
+
+    const rows = [];
+
+    // Encabezados
+    const encabezados = [];
+    $('#mi-tabla thead th').each(function() {
+        if ($(this).text() !== 'Acciones') {
+            encabezados.push($(this).text());
+        }
+    });
+
+    rows.push(encabezados);
+
+    // Filas filtradas
+    datos.each(function(fila) {
+        rows.push(fila.slice(0, encabezados.length));
+    });
+
+    // Crear Excel
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+
+    XLSX.utils.book_append_sheet(wb, ws, "Consulta");
+
+    XLSX.writeFile(wb, "Consulta_Filtrada.xlsx");
+
+    $('#agregar-registro').on('click', function() {
+
+    // Número de columnas reales (sin "Acciones")
+    let columnas = $('#mi-tabla thead th').length - 1;
+
+    // Creamos fila vacía
+    let nuevaFila = [];
+
+    for (let i = 0; i < columnas; i++) {
+        nuevaFila.push('');
+    }
+
+    // Agregamos columna de acciones
+    nuevaFila.push(`
+        <button class="btn btn-sm btn-success save">Guardar</button>
+        <button class="btn btn-sm btn-danger del">Eliminar</button>
+    `);
+
+    // Insertamos en DataTables
+    let nodo = tabla.row.add(nuevaFila).draw(false).node();
+
+    // Convertimos las celdas en inputs automáticamente
+    $(nodo).find('td:not(:last-child)').each(function() {
+        $(this).html('<input class="form-control form-control-sm">');
+    });
+
+    // Scroll automático (opcional)
+    $('html, body').animate({
+        scrollTop: $(nodo).offset().top - 100
+    }, 300);
+});
+
+});
+});
+
+});
+</script>
+
+</body>
+</html>
